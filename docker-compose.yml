@@ -1,0 +1,39 @@
+services:
+  # MongoDB Database Service
+  database:
+    image: mongo:latest
+    container_name: homelab-db
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    restart: unless-stopped
+
+  # Node.js Backend Service
+  backend:
+    build: ./backend
+    container_name: homelab-backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: npm run dev
+    depends_on:
+      - database
+    restart: unless-stopped
+    
+  # React Frontend Service
+  frontend:
+    build: ./frontend
+    container_name: homelab-frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev
+    restart: unless-stopped
+
+volumes:
+  mongo-data:
