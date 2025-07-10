@@ -1,13 +1,11 @@
 const router = require('express').Router();
 const Widget = require('../models/widget.model');
-const { v4: uuidv4 } = require('uuid'); // We need uuid on the backend now
+const { v4: uuidv4 } = require('uuid');
 
-// --- THIS IS THE FIX FOR THE RACE CONDITION ---
 // GET THE CURRENT WIDGET LAYOUT
 router.get('/layout', async (req, res) => {
   try {
     let widgets = await Widget.find();
-    // If the database is empty, create and save a default widget layout.
     if (widgets.length === 0) {
       console.log("No layout found in DB, creating a default one.");
       const defaultWidget = new Widget({
@@ -25,13 +23,78 @@ router.get('/layout', async (req, res) => {
   }
 });
 
-// POST /layout (logic is now simpler as upsert is more reliable)
-router.post('/layout', async (req, res) => { const layout = req.body; if (!layout || !Array.isArray(layout)) { return res.status(400).send('Invalid layout data'); } try { const operations = layout.map(item => ({ updateOne: { filter: { id: item.id }, update: { $set: { ...item } }, upsert: true } })); if (operations.length > 0) { await Widget.bulkWrite(operations); } res.status(200).send('Layout saved'); } catch (error) { console.error('Error saving layout:', error); res.status(500).json('Error saving layout: ' + error); } });
+// SAVE THE ENTIRE DASHBOARD LAYOUT
+router.post('/layout', async (req, res) => {
+    const layout = req.body;
+    if (!layout || !Array.isArray(layout)) {
+        return res.status(400).send('Invalid layout data');
+    }
+    try {
+        const operations = layout.map(item => ({
+            updateOne: {
+                filter: { id: item.id },
+                update: { $set: { ...item } },
+                upsert: true
+            }
+        }));
+        if (operations.length > 0) {
+            await Widget.bulkWrite(operations);
+        }
+        res.status(200).send('Layout saved');
+    } catch (error) {
+        console.error('Error saving layout:', error);
+        res.status(500).json('Error saving layout: ' + error);
+    }
+});
 
 // UPDATE CONFIG FOR A SINGLE WIDGET
-router.post('/widget/:id/config', async (req, res) => { /* ... (Unchanged) ... */ try{const t=await Widget.findOneAndUpdate({id:req.params.id},{$set:{config:req.body}},{new:!0});t?res.json(t):res.status(404).send("Widget not found")}catch(t){res.status(500).json("Error: "+t)} });
+router.post('/widget/:id/config', async (req, res) => {
+    try {
+        // We use $set to only update the config property
+        const updatedWidget = await Widget.findOneAndUpdate(
+            { id: req.params.id },
+            { $set: { config: req.body } },
+            { new: true } // This option returns the document after it has been updated
+        );
+        if (updatedWidget) {
+            res.json(updatedWidget);
+        } else {
+            res.status(404).send("Widget not found");
+        }
+    } catch (error) {
+        res.status(500).json('Error: ' + error);
+    }
+});
 
-// DELETE /widget/:id
-router.delete('/widget/:id', async (req, res) => { /* ... (Unchanged) ... */ try{await Widget.deleteOne({id:req.params.id}),res.status(200).send("Widget deleted")}catch(t){res.status(500).json("Error: "+t)} });
+// --- THIS IS THE NEW ENDPOINT ---
+// UPDATE THE LAST ACCESSED TIME FOR A WIDGET
+router.post('/widget/:id/accessed', async (req, res) => {
+  try {
+      const updatedWidget = await Widget.findOneAndUpdate(
+          { id: req.params.id },
+          // Use dot notation to update a nested field within the config object
+          { $set: { "config.lastAccessed": new Date() } },
+          { new: true }
+      );
+      if (updatedWidget) {
+          res.json(updatedWidget);
+      } else {
+          res.status(404).send("Widget not found");
+      }
+  } catch (error) {
+      res.status(500).json('Error: ' + error);
+  }
+});
+
+
+// DELETE A SINGLE WIDGET
+router.delete('/widget/:id', async (req, res) => {
+    try {
+        await Widget.deleteOne({ id: req.params.id });
+        res.status(200).send("Widget deleted");
+    } catch (error) {
+        res.status(500).json('Error: ' + error);
+    }
+});
 
 module.exports = router;
