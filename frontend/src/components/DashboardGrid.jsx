@@ -28,7 +28,7 @@ const WidgetRenderer = ({ widget, ...props }) => {
                     <button onClick={() => props.onConfigure(widget)} className="p-2 bg-blue-800 rounded-full text-white hover:bg-blue-600"><FaCog /></button>
                 </div>
             )}
-            <WidgetComponent widget={widget} />
+            <WidgetComponent widget={widget} allWidgets={props.allWidgets} onConfigure={props.onConfigure} onRemove={props.onRemove} onUpdate={props.onUpdate} />
         </div>
     );
 };
@@ -40,10 +40,35 @@ const DashboardGrid = ({ isEditing, newWidgetType, onWidgetAdded }) => {
     const [configuringWidget, setConfiguringWidget] = useState(null);
     const gridApiRef = useRef(null);
 
-    useEffect(() => { fetchLayout(); }, []);
     const fetchLayout = async () => { try{const t=await axios.get("http://localhost:3000/api/dashboard/layout");setWidgets(t.data)}catch(t){console.error("Failed to fetch layout",t),setWidgets([])} };
-    const handleSaveConfig = (updatedWidgetFromServer) => { setConfiguringWidget(null),setWidgets(t=>t.map(t=>t.id===updatedWidgetFromServer.id?updatedWidgetFromServer:t)) };
-    const handleRemoveWidget = async (widgetId) => { try{await axios.delete(`http://localhost:3000/api/dashboard/widget/${widgetId}`),setWidgets(t=>t.filter(t=>t.id!==widgetId))}catch(t){console.error("Failed to delete widget",t)} };
+    useEffect(() => { fetchLayout(); }, []);
+    
+    const handleConfigureWidget = (widget) => setConfiguringWidget(widget);
+
+    // --- Definitive fix for the save bug ---
+    const handleSaveConfig = async (updatedWidgetFromServer) => {
+        // The config is already saved by the modal. Now, just refresh the whole layout.
+        await fetchLayout();
+        setConfiguringWidget(null); // Close the modal
+    };
+
+    const handleRemoveWidget = async (widgetIdToRemove) => {
+        const holderToRemove = widgets.find(w => w.id === widgetIdToRemove && w.type === 'LinkHolder');
+        if (holderToRemove) {
+            const childrenToUpdate = widgets.filter(w => w.config?.holderId === widgetIdToRemove)
+                .map(w => {
+                    const newConfig = { ...w.config }; delete newConfig.holderId;
+                    const { x, y } = findNextAvailablePosition(widgets.filter(i => i.id !== widgetIdToRemove), 4, 2, 12);
+                    return { ...w, config: newConfig, x, y };
+                });
+            if (childrenToUpdate.length > 0) {
+                await axios.post("http://localhost:3000/api/dashboard/layout", childrenToUpdate);
+            }
+        }
+        await axios.delete(`http://localhost:3000/api/dashboard/widget/${widgetIdToRemove}`);
+        await fetchLayout(); // Re-fetch to get the clean state from the server.
+    };
+
     useEffect(() => {
         if (newWidgetType) { const t={w:4,h:4};"TerminalWidget"===newWidgetType&&(t.h=6),"TimeWidget"===newWidgetType&&(t.h=4),"LinkLauncher"===newWidgetType&&(t.w=4,t.h=2),"LinkHolder"===newWidgetType&&(t.w=12,t.h=4);const{x:e,y:o}=findNextAvailablePosition(widgets,t.w,t.h,12),r={id:`${newWidgetType.toLowerCase()}-${uuidv4()}`,type:newWidgetType,x:e,y:o,...t,config:{}};const i=[...widgets,r];setWidgets(i);(async()=>{try{await axios.post("http://localhost:3000/api/dashboard/layout",i)}catch(t){console.error("Failed to save new widget",t)}})(),onWidgetAdded()}
     }, [newWidgetType, onWidgetAdded]);
@@ -52,36 +77,22 @@ const DashboardGrid = ({ isEditing, newWidgetType, onWidgetAdded }) => {
         if (gridApiRef.current) gridApiRef.current.destroy(false);
         const grid = GridStack.init({ cellHeight: '70px', margin: 10, float: true, staticGrid: !isEditing, minW: 4, minH: 2 });
         gridApiRef.current = grid;
-
-        // --- THIS IS THE NEW HANDLER ---
-        const handleTerminalReady = (widgetId) => {
-            // A terminal widget has announced it is in the DOM and ready.
-            // Now we can safely tell it to initialize itself.
-            eventBus.dispatch('initialize-terminal', widgetId);
-        };
+        const handleTerminalReady = (widgetId) => { eventBus.dispatch('initialize-terminal', widgetId); };
         eventBus.on('terminal-widget-ready', handleTerminalReady);
-
-        grid.on('change', async (event, items) => {
-            if(!items||0===items.length)return;
-            const t=gridApiRef.current.save(!1),e=t.map(t=>{const e=widgets.find(e=>e.id===t.id);return{...e,...t}});
-            if(e.some(t=>!t.type))return;
-            try{await axios.post("http://localhost:3000/api/dashboard/layout",e)}catch(t){console.error("Failed to save layout on change",t)}
-        });
-        
-        return () => {
-            if (grid) grid.destroy(false);
-            eventBus.remove('terminal-widget-ready', handleTerminalReady);
-        };
+        grid.on('change', async (event, items) => { if(!items||0===items.length)return;const t=gridApiRef.current.save(!1),e=t.map(t=>{const e=widgets.find(e=>e.id===t.id);return{...e,...t}});if(e.some(t=>!t.type))return;try{await axios.post("http://localhost:3000/api/dashboard/layout",e)}catch(t){console.error("Failed to save layout on change",t)} });
+        return () => { if (grid) grid.destroy(false); eventBus.remove('terminal-widget-ready', handleTerminalReady); };
     }, [widgets, isEditing]);
+
+    const widgetsToRender = widgets.filter(w => w.type !== 'LinkLauncher' || !w.config?.holderId);
 
     return (
         <>
-            <WidgetConfigModal widget={configuringWidget} onClose={() => setConfiguringWidget(null)} onSave={handleSaveConfig} />
+            <WidgetConfigModal widget={configuringWidget} onClose={() => setConfiguringWidget(null)} onSave={handleSaveConfig} allWidgets={widgets} />
             <div className="grid-stack">
-                {widgets.map((widget) => (
+                {widgetsToRender.map((widget) => (
                     <div key={widget.id} className="grid-stack-item" gs-id={widget.id} gs-x={widget.x} gs-y={widget.y} gs-w={widget.w} gs-h={widget.h}>
                         <div className="grid-stack-item-content bg-[#0f172a] border border-[#1e293b] rounded-lg overflow-hidden">
-                            <WidgetRenderer widget={widget} isEditing={isEditing} onRemove={handleRemoveWidget} onConfigure={setConfiguringWidget} />
+                            <WidgetRenderer widget={widget} isEditing={isEditing} onRemove={handleRemoveWidget} onConfigure={handleConfigureWidget} onUpdate={handleSaveConfig} allWidgets={widgets} />
                         </div>
                     </div>
                 ))}
