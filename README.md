@@ -55,12 +55,12 @@ Make sure you have the following installed on your machine:
 1.  **Clone the Repository**
     Open your terminal and clone this project to your machine.
     ```bash
-    git clone https://github.com/your-username/your-repo-name.git
+    git clone https://github.com/shizuo-x/homelab-dashboard.git
     ```
 
 2.  **Navigate to the Project Directory**
     ```bash
-    cd your-repo-name
+    cd homelab-dashboard
     ```
 
 3.  **Launch the Application! 🚀**
